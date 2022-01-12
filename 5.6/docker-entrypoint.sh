@@ -358,6 +358,36 @@ _mysql_want_help() {
 	return 1
 }
 
+# run all the sqitch parts we need
+sqitch_main() {
+	# This should always happen - partly as a test, but also because sqitch needs it to exist already...
+	mysql_note "Creating sqitch registry at ${SQITCH_REGISTRY}"
+	docker_process_sql --database=mysql <<<"CREATE DATABASE IF NOT EXISTS \`$SQITCH_REGISTRY\` ;"
+
+	if [ -n "$SQITCH_RUN_DEPLOY" ]; then
+		# we need the root password to run anything and everything if we're root
+		if [ "$SQITCH_USERNAME" = "root" ]; then
+			SQITCH_PASSWORD=$MYSQL_ROOT_PASSWORD
+		fi
+
+		if [ -z "$SQITCH_TARGET" ] && [ -n "$MYSQL_DATABASE" ]; then
+			SQITCH_TARGET=$MYSQL_DATABASE
+		else
+			mysql_error "SQITCH_TARGET or MYSQL_DATABASE required to be set to run sqitch"
+		fi
+
+		mysql_note "Creating sqitch target at ${SQITCH_TARGET}"
+		docker_process_sql --database=mysql <<<"CREATE DATABASE IF NOT EXISTS \`$SQITCH_TARGET\` ;"
+
+		# Finally, run sqitch! Done in a subshell so cd doesnt mess with anything.
+		# we explicitly target localhost to stop some clever messing on creation
+		# SQITCH_CONFIG_MOUNT defaults to /docker-entrypoint-sqitch.d
+		mysql_note "Deploying sqitch config mounted at $SQITCH_CONFIG_MOUNT"
+		(cd $SQITCH_CONFIG_MOUNT && \
+			sqitch deploy --registry="${SQITCH_REGISTRY}" "db:mysql://${SQITCH_USERNAME}:${SQITCH_PASSWORD}@localhost/${SQITCH_TARGET}")
+	fi
+}
+
 _main() {
 	# if command starts with an option, prepend mysqld
 	if [ "${1:0:1}" = '-' ]; then
@@ -394,6 +424,8 @@ _main() {
 
 			docker_setup_db
 			docker_process_init_files /docker-entrypoint-initdb.d/*
+
+			sqitch_main
 
 			mysql_expire_root_user
 

@@ -4,6 +4,61 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
+# Pulled from github.com/sqitchers/docker-sqitch
+FROM debian:buster-slim AS sqitch-build
+
+ENV SQITCH_VERSION=1.2.1
+
+# Borrow the repo from main setup
+RUN apt-get update && apt-get install -y --no-install-recommends gnupg dirmngr && rm -rf /var/lib/apt/lists/*
+
+RUN set -ex; \
+# gpg: key 5072E1F5: public key "MySQL Release Engineering <mysql-build@oss.oracle.com>" imported
+	key='A4A9406876FCBD3C456770C88C718D3B5072E1F5'; \
+	export GNUPGHOME="$(mktemp -d)"; \
+	gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key"; \
+	gpg --batch --export "$key" > /etc/apt/trusted.gpg.d/mysql.gpg; \
+	gpgconf --kill all; \
+	rm -rf "$GNUPGHOME"; \
+	apt-key list > /dev/null
+
+RUN echo 'deb http://repo.mysql.com/apt/debian/ buster mysql-5.7' > /etc/apt/sources.list.d/mysql.list
+
+RUN { \
+		echo mysql-community-server mysql-community-server/data-dir select ''; \
+		echo mysql-community-server mysql-community-server/root-pass password ''; \
+		echo mysql-community-server mysql-community-server/re-root-pass password ''; \
+		echo mysql-community-server mysql-community-server/remove-test-db select false; \
+	} | debconf-set-selections
+
+# Install system dependencies.
+WORKDIR /work
+ARG VERSION
+RUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \
+    && apt-get -qq update \
+    && apt-get -qq install build-essential perl curl \
+       libmysqlclient-dev \
+    && curl -LO https://www.cpan.org/authors/id/D/DW/DWHEELER/App-Sqitch-v$SQITCH_VERSION.tar.gz \
+    && mkdir src \
+    && tar -zxf App-Sqitch-v$SQITCH_VERSION.tar.gz --strip-components 1 -C src
+
+# Install cpan and build dependencies.
+ENV PERL5LIB /work/local/lib/perl5
+RUN curl -sL --compressed https://git.io/cpm > cpm && chmod +x cpm \
+    && ./cpm install -L local --verbose --no-test --show-build-log-on-failure ExtUtils::MakeMaker \
+    && ./cpm install -L local --verbose --no-test --show-build-log-on-failure --with-recommends \
+        --with-configure --cpanfile src/dist/cpanfile
+
+# Build, test, bundle, prune.
+WORKDIR /work/src
+
+RUN perl Build.PL --quiet --install_base /app --etcdir /etc/sqitch \
+    --config installman1dir= --config installsiteman1dir= --config installman3dir= --config installsiteman3dir= \
+    && ./Build test && ./Build bundle \
+    && rm -rf /app/man \
+    && find /app -name '*.pod' | grep -v sqitch | xargs rm -rf
+
+# Original dockerfile
 FROM debian:buster-slim
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
@@ -89,7 +144,39 @@ RUN { \
 # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime
 	&& chmod 1777 /var/run/mysqld /var/lib/mysql
 
-VOLUME /var/lib/mysql
+# we want the volume to not exist to allow for creating images with custom databases integrated
+# VOLUME /var/lib/mysql
+
+## START sqitch magic
+# Add in the sqitch setup, modified to use mysql specific parts
+RUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \
+    && apt-get -qq update \
+    && apt-get -qq --no-install-recommends install less perl-doc nano ca-certificates libdbd-mysql-perl \
+    && apt-get clean \
+    # Let libcurl find certs. https://stackoverflow.com/q/3160909/79202
+    && mkdir -p /etc/pki/tls && ln -s /etc/ssl/certs /etc/pki/tls/ \
+    && rm -rf /var/cache/apt/* /var/lib/apt/lists/* \
+    && rm -rf /plibs /man /usr/share/man /usr/share/doc /usr/share/nano /etc/nanorc \
+    && find / -name '*.pod' | grep -v sqitch | xargs rm -rf \
+    && find / -name '*.ph' -delete \
+    && find / -name '*.h' -delete
+
+# Copy the app and config from the build image.
+COPY --from=sqitch-build /app .
+COPY --from=sqitch-build /etc/sqitch /etc/sqitch/
+
+# Set up environment, entrypoint, and default command.
+ENV LESS=-R LC_ALL=C.UTF-8 LANG=C.UTF-8 SQITCH_EDITOR=nano SQITCH_PAGER=less
+## END sqitch copied magic
+
+# Set up other sqitch user configurable ENV vars with defaults
+# SQITCH_TARGET is not set here, and computed in the docker-entrypoint.sh
+ENV SQITCH_CONFIG_MOUNT /docker-entrypoint-sqitch.d
+RUN mkdir $SQITCH_CONFIG_MOUNT
+
+# These are standard defaults, declared here for clarity
+ENV SQITCH_REGISTRY sqitch
+ENV SQITCH_USERNAME root
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh # backwards compat

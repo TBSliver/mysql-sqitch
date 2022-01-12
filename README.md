@@ -1,3 +1,30 @@
+# MySQL Sqitch
+
+This is a modified version of the MySQL docker images to do the following:
+
+* Add Sqitch to the final image
+* Add a user for sqitch to use that is localhost only accessible
+* Add the ability to automatically run sqitch deploy
+* Adds the following ENV vars:
+  * `SQITCH_RUN_DEPLOY` If set, will run sqitch deploy during setup.
+  * `SQITCH_CONFIG_MOUNT` Mount point for sqitch to work from - defaults to /docker-entrypoint-sqitch.d. Must be the location of your sqitch.conf, or where your sqitch plan file is if using `SQITCH_CONFIG`.
+  * Default Sqitch Environment Vars are also available - see [documentation](https://github.com/sqitchers/sqitch/blob/develop/lib/sqitch-environment.pod)
+  * `SQITCH_USERNAME` will default to 'root' user provided by the base mysql docker image - set on creating the image to override - however modifying this may cause issues if the user is not given required access to the target and registry databases.
+  * `SQITCH_TARGET` will default to `MYSQL_DATABASE` and throw an error if not set when `SQITCH_RUN_DEPLOY` is set.
+  * `SQITCH_REGISTRY` will default to 'sqitch'. Change to use a different registry name.
+
+Note this has only been tested on the 8.0 Docker setup.
+
+## License
+
+Original Docker mysql setup released under GPLv2 - see [License](LICENSE) under [original repo](https://github.com/docker-library/mysql)
+
+Sqitch docker image items released under MIT - see [License](https://github.com/sqitchers/docker-sqitch/blob/5fc592f36cc1780ee44f30696de385ce9ae7217e/LICENSE.md) under [original repo](https://github.com/sqitchers/docker-sqitch/)
+
+For now, the original README follows
+
+---
+
 # https://github.com/docker-library/mysql
 
 ## Maintained by: [the Docker Community and the MySQL Team](https://github.com/docker-library/mysql)
