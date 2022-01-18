@@ -372,7 +372,7 @@ sqitch_main() {
 
 		if [ -z "$SQITCH_TARGET" ] && [ -n "$MYSQL_DATABASE" ]; then
 			SQITCH_TARGET=$MYSQL_DATABASE
-		else
+		elif [ -z "$SQITCH_TARGET" ]; then
 			mysql_error "SQITCH_TARGET or MYSQL_DATABASE required to be set to run sqitch"
 		fi
 
@@ -435,6 +435,23 @@ _main() {
 
 			echo
 			mysql_note "MySQL init process done. Ready for start up."
+			echo
+		fi
+
+		# Run sqitch_main a second time, allowing for database to already exist but needing updates
+		if [ -n "$SQITCH_RUN_DEPLOY" ]; then
+			mysql_note "Starting temporary server for sqitch deploy"
+			docker_temp_server_start "$@"
+			mysql_note "Temporary server started."
+
+			sqitch_main
+
+			mysql_note "Stopping temporary server"
+			docker_temp_server_stop
+			mysql_note "Temporary server stopped"
+
+			echo
+			mysql_note "Sqitch deploy done. Ready for start up."
 			echo
 		fi
 	fi
